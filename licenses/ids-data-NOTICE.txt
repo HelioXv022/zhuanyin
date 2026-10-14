@@ -1,0 +1,4 @@
+ids.json（缺字部件拼合表）由 cjkvi-ids 的 ids.txt 整理而來，
+ids.txt 源自 CHISE 計畫，依 GPL 第 2 版散布，全文見 GPL-2.0.txt。
+來源：https://github.com/cjkvi/cjkvi-ids  ·  http://www.chise.org/
+整理方式：僅保留左右／上下結構、偏旁換成《說文》本字（氵→水、扌→手、王旁→玉等）。

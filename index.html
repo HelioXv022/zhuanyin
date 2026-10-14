@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="輸入漢字，自動轉成小篆並排成印面：朱文、白文、方印、圓印，導出透明 PNG 與 SVG。">
+<style>html,body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>篆印工坊</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a seal-catalogue leaf (印谱) on the left/top; the carving bench (controls) beside/below it. */
+:root{
+  --paper:#e9ebe4;      /* page ground: cool xuan paper */
+  --leaf:#f6f5ee;       /* the catalogue leaf the impression sits on */
+  --ink:#1f2320;        /* text */
+  --ink-2:#5b625c;      /* secondary text */
+  --rule:#cfd3ca;       /* hairlines */
+  --azurite:#2f5d7c;    /* UI accent: 石青, kept apart from the seal red */
+  --azurite-soft:#dde6ea;
+  --warn:#9a6a12;
+  --shadow:0 1px 0 rgba(30,35,30,.06),0 10px 30px -18px rgba(30,35,30,.35);
+  --f-display:"LXGW WenKai TC","Kaiti TC","STKaiti","KaiTi",serif;
+  --f-body:-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#171a19;--leaf:#ecebe2;--ink:#e4e6e1;--ink-2:#9aa29b;--rule:#2d3230;
+  --azurite:#8db3cf;--azurite-soft:#22313b;--warn:#e0b45a;
+  --shadow:0 1px 0 rgba(0,0,0,.4),0 14px 34px -16px rgba(0,0,0,.8);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#171a19;--leaf:#ecebe2;--ink:#e4e6e1;--ink-2:#9aa29b;--rule:#2d3230;
+  --azurite:#8db3cf;--azurite-soft:#22313b;--warn:#e0b45a;
+  --shadow:0 1px 0 rgba(0,0,0,.4),0 14px 34px -16px rgba(0,0,0,.8);color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.6}
+.wrap{max-width:1080px;margin:0 auto;padding-inline:16px;padding-block:20px 48px}
+header.top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+h1{font-family:var(--f-display);font-weight:700;font-size:1.7rem;letter-spacing:.08em;margin:0;text-wrap:balance}
+.sub{color:var(--ink-2);font-size:.85rem;margin:0}
+.grid{display:grid;gap:20px;grid-template-columns:1fr}
+@media (min-width:860px){.grid{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);align-items:start}.leafcol{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px)}}
+
+/* the leaf */
+.leaf{background:var(--leaf);box-shadow:var(--shadow);border-radius:3px;padding:22px 18px 16px;position:relative;color:#1f2320}
+.leaf-in{display:flex;gap:14px;align-items:center;justify-content:center;min-height:300px}
+.stage{flex:1;min-width:0;display:flex;align-items:center;justify-content:center}
+#seal{width:min(100%,380px);height:auto;display:block;image-rendering:auto}
+.shiwen{writing-mode:vertical-rl;font-family:var(--f-display);color:#2a2e2a;align-self:flex-start;flex:none;padding-top:6px;line-height:1.3}
+.shiwen span{display:block}
+.shiwen .big{font-size:1.25rem;letter-spacing:.25em;margin-left:8px}
+.shiwen .small{font-size:.78rem;color:#6b716a;letter-spacing:.15em}
+.leaf-foot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;border-top:1px solid #d9d9cf;margin-top:14px;padding-top:10px;font-size:.78rem;color:#6b716a}
+.leaf-foot .mono{font-family:var(--f-mono)}
+.busy{position:absolute;inset:auto 16px 54px auto;font-size:.75rem;color:#6b716a}
+
+/* chars strip */
+.chars{display:grid;grid-template-columns:repeat(var(--cols,4),minmax(0,1fr));gap:8px;margin-top:14px}
+.ch{background:transparent;border:1px solid var(--rule);border-radius:4px;padding:8px 6px 6px;display:grid;justify-items:center;gap:2px;cursor:pointer;color:var(--ink);font:inherit;text-align:center}
+.ch:hover{border-color:var(--azurite)}
+.ch[aria-pressed="true"]{border-color:var(--azurite);background:var(--azurite-soft)}
+.ch canvas{width:46px;height:46px}
+.ch .kai{font-family:var(--f-display);font-size:1.05rem;line-height:1.2}
+.ch .code{font-family:var(--f-mono);font-size:.62rem;color:var(--ink-2)}
+.tag{font-size:.66rem;padding:0 6px;border-radius:99px;border:1px solid currentColor;line-height:1.5}
+.tag.ok{color:var(--ink-2)}
+.tag.comp{color:var(--azurite)}
+.tag.miss{color:var(--warn)}
+
+/* bench */
+.bench{display:grid;gap:18px}
+.panel{display:grid;gap:12px}
+.panel h2{font-family:var(--f-display);font-size:1.05rem;font-weight:700;margin:0;letter-spacing:.1em;display:flex;align-items:baseline;gap:8px}
+.panel h2 small{font-family:var(--f-body);font-weight:400;font-size:.75rem;color:var(--ink-2);letter-spacing:0}
+.textin{display:flex;gap:8px}
+.textin input{flex:1;min-width:0;font-family:var(--f-display);font-size:1.5rem;letter-spacing:.2em;padding:8px 12px;border:1px solid var(--rule);border-radius:4px;background:var(--leaf);color:#1f2320}
+.textin input:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--azurite);outline-offset:2px}
+.hint{font-size:.8rem;color:var(--ink-2);margin:0}
+.hint b{font-weight:500;color:var(--ink)}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{font:inherit;font-size:.88rem;padding:6px 12px;border-radius:4px;border:1px solid var(--rule);background:transparent;color:var(--ink);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.row{display:grid;grid-template-columns:5.5em minmax(0,1fr) 3em;align-items:center;gap:10px;font-size:.88rem}
+.row label{color:var(--ink-2)}
+.row output{font-family:var(--f-mono);font-size:.78rem;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--azurite)}
+.swatches{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.sw{width:34px;height:34px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;position:relative}
+.sw[aria-pressed="true"]{border-color:var(--ink)}
+.sw span{position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:.66rem;color:var(--ink-2);white-space:nowrap;margin-top:2px}
+.swatches{padding-bottom:16px}
+input[type=color]{width:34px;height:34px;border:1px solid var(--rule);border-radius:50%;padding:0;background:none;cursor:pointer}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{font:inherit;font-size:.9rem;padding:9px 16px;border-radius:4px;border:1px solid var(--azurite);background:var(--azurite);color:var(--paper);cursor:pointer}
+.btn.ghost{background:transparent;color:var(--azurite)}
+.edit{border:1px dashed var(--azurite);border-radius:4px;padding:12px;display:grid;gap:10px;background:color-mix(in srgb,var(--azurite-soft) 45%,transparent)}
+.edit .ids{font-family:var(--f-display);font-size:1.2rem;padding:6px 10px;border:1px solid var(--rule);border-radius:4px;background:var(--leaf);color:#1f2320;width:100%}
+.note{font-size:.75rem;color:var(--ink-2);line-height:1.55}
+.note a{color:var(--azurite)}
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:4px;font-size:.85rem;max-width:calc(100% - 32px)}
+.sheet{position:fixed;inset:0;background:rgba(10,12,11,.6);display:grid;place-items:center;padding:16px;z-index:9}
+.sheet div{background:var(--leaf);color:#1f2320;padding:16px;border-radius:4px;max-width:420px;display:grid;gap:10px;text-align:center}
+.sheet img{max-width:100%;background:repeating-conic-gradient(#e6e6e0 0 25%,#f6f5ee 0 50%) 0 0/16px 16px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap"><header class="top">
+    <h1>篆印工坊</h1>
+    <p class="sub">輸入漢字，自動轉成小篆並排成印面</p>
+  </header>
+
+  <div class="grid">
+    <section class="leafcol" aria-label="印面預覽">
+      <div class="leaf">
+        <div class="leaf-in">
+          <div class="stage"><canvas id="seal" width="760" height="760" aria-label="印章預覽"></canvas></div>
+          <div class="shiwen" aria-hidden="true"><span class="big" id="swText"></span><span class="small" id="swKind"></span></div>
+        </div>
+        <div class="busy" id="busy" hidden>取字中…</div>
+        <div class="leaf-foot"><span id="readOrder"></span><span class="mono" id="sizeNote"></span></div>
+      </div>
+      <div class="chars" id="chars" aria-label="逐字釋讀"></div>
+      <div id="editor"></div>
+    </section>
+
+    <section class="bench" aria-label="刻印設定">
+      <div class="panel">
+        <h2>印文 <small>簡體會自動轉繁，可直接輸入繁體</small></h2>
+        <div class="textin"><input id="txt" value="许子琦印" maxlength="12" autocomplete="off" spellcheck="false" aria-label="印文"></div>
+        <p class="hint" id="convHint"></p>
+      </div>
+
+      <div class="panel">
+        <h2>印式</h2>
+        <div class="seg" id="kindSeg">
+          <button data-v="zhu" aria-pressed="true">朱文（陽刻）</button>
+          <button data-v="bai" aria-pressed="false">白文（陰刻）</button>
+        </div>
+        <div class="seg" id="shapeSeg">
+          <button data-v="square" aria-pressed="true">方印</button>
+          <button data-v="tall" aria-pressed="false">長方</button>
+          <button data-v="round" aria-pressed="false">圓印</button>
+        </div>
+        <div class="seg" id="orderSeg" hidden>
+          <button data-v="normal" aria-pressed="true">右起直讀</button>
+          <button data-v="huiwen" aria-pressed="false">回文（姓印同列）</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>刀法</h2>
+        <div class="row"><label for="rWeight">筆畫粗細</label><input type="range" id="rWeight" min="0" max="30" value="6"><output id="oWeight"></output></div>
+        <div class="row"><label for="rBorder" id="lBorder">邊框</label><input type="range" id="rBorder" min="10" max="90" value="34"><output id="oBorder"></output></div>
+        <div class="row"><label for="rGap">字距</label><input type="range" id="rGap" min="0" max="80" value="18"><output id="oGap"></output></div>
+        <div class="row"><label for="rStretch">字形撐滿</label><input type="range" id="rStretch" min="0" max="100" value="85"><output id="oStretch"></output></div>
+        <div class="row"><label for="rWear">殘破</label><input type="range" id="rWear" min="0" max="100" value="45"><output id="oWear"></output></div>
+        <div class="actions"><button class="btn ghost" id="reseed" type="button">換一種殘破</button></div>
+      </div>
+
+      <div class="panel">
+        <h2>印泥</h2>
+        <div class="swatches" id="swatches"></div>
+      </div>
+
+      <div class="panel">
+        <h2>導出</h2>
+        <div class="actions">
+          <button class="btn" id="dlPng" type="button">透明底 PNG（2000px）</button>
+          <button class="btn ghost" id="dlSvg" type="button">矢量 SVG（無殘破）</button>
+        </div>
+        <p class="note">PNG 為透明底，可直接疊在書畫上；SVG 是乾淨的線稿，適合激光雕刻或再加工。</p>
+      </div>
+
+      <p class="note">字形：中央研究院「崇羲篆體」（約 11,600 字，依《說文》小篆），<a href="https://xiaoxue.iis.sinica.edu.tw/chongxi/copyright.htm" target="_blank" rel="noopener">CC BY-ND 3.0 TW</a> 授權。《說文》未收的字按部件結構自動拼合，可逐字調整；部件資料來自 <a href="https://github.com/cjkvi/cjkvi-ids" target="_blank" rel="noopener">cjkvi-ids</a> / CHISE（GPLv2）。程式庫：opentype.js、opencc-js（MIT）。</p>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/cn2t.js"></script>
+<script>
+(() => {
+const NCHUNK = 120;
+const INKS = [
+  {n:"朱磦", c:"#c4462b"}, {n:"朱砂", c:"#b42a20"}, {n:"光明", c:"#a51d1d"}, {n:"藏紅", c:"#8f2a22"}, {n:"墨", c:"#262624"}
+];
+const RADICALS_L = new Set("玉人水手心言示衣犬食金木禾糸口日月肉火土石目足車馬魚女彳山弓巾米阜貝耳虫舟革骨酉身角豸隹歹牛羊立矢缶田广疒片方火".split(""));
+const TOP_SMALL = new Set("艸竹雨宀穴冖爫网山䒑".split(""));
+const BOTTOM_SMALL = new Set("心火皿貝木女子".split(""));
+
+const $ = s => document.querySelector(s);
+const state = {
+  text: "许子琦印", kind: "zhu", shape: "square", order: "normal",
+  weight: 6, border: 34, gap: 18, stretch: 85, wear: 45, seed: 7, ink: INKS[1].c,
+  sel: -1, overrides: {}   // per resolved-char: {ids, ratio}
+};
+let avail = new Set(), idsMap = {}, fonts = {}, conv = null;
+let items = [];   // [{src, ch, kind:'ok'|'comp'|'miss', ids}]
+
+/* ---------- data ---------- */
+async function loadMeta(){
+  const [c, d] = await Promise.all([fetch("chars.txt").then(r=>r.text()), fetch("ids.json").then(r=>r.json())]);
+  avail = new Set(Array.from(c)); idsMap = d;
+}
+function chunkOf(ch){ return ch.codePointAt(0) % NCHUNK; }
+async function font(i){
+  if (!fonts[i]) fonts[i] = fetch(`g/${i}.ttf`).then(r=>r.arrayBuffer()).then(b=>opentype.parse(b));
+  return fonts[i];
+}
+async function glyph(ch){
+  const f = await font(chunkOf(ch));
+  const g = f.charToGlyph(ch);
+  return g && g.index ? g : null;
+}
+function makeConv(){
+  try{
+    if (window.OpenCC) conv = { t: OpenCC.Converter({from:"cn",to:"t"}), tw: OpenCC.Converter({from:"cn",to:"tw"}), hk: OpenCC.Converter({from:"cn",to:"hk"}) };
+  }catch(e){ conv = null; }
+}
+
+/* ---------- resolve characters ---------- */
+const IDC = {"⿰":2,"⿱":2,"⿲":3,"⿳":3};
+function parseIds(s){
+  const a = Array.from(s); let i = 0;
+  function node(){
+    const c = a[i++]; if (c === undefined) throw 0;
+    if (IDC[c]) { const k=[c]; for (let j=0;j<IDC[c];j++) k.push(node()); return k; }
+    return c;
+  }
+  const t = node(); if (i !== a.length) throw 0; return t;
+}
+function leaves(t){ return typeof t === "string" ? [t] : t.slice(1).flatMap(leaves); }
+
+function resolve(){
+  const src = Array.from(state.text).filter(c => /\p{Script=Han}/u.test(c)).slice(0, 12);
+  const join = src.join("");
+  const conv3 = conv ? [conv.t(join), conv.tw(join), conv.hk(join)].map(s => Array.from(s)) : [];
+  items = src.map((s, i) => {
+    const cands = [];
+    for (const arr of conv3) if (arr.length === src.length) cands.push(arr[i]);
+    cands.push(s);
+    const ov = state.overrides[i];
+    if (ov && ov.form) cands.unshift(ov.form);
+    let ch = cands.find(c => avail.has(c));
+    if (ch && !(ov && ov.ids)) return {src:s, ch, kind:"ok"};
+    const base = cands[0];
+    const idsStr = (ov && ov.ids) || idsMap[base] || cands.map(c => idsMap[c]).find(Boolean);
+    if (idsStr) {
+      try{ const tree = parseIds(idsStr); if (leaves(tree).every(l => avail.has(l))) return {src:s, ch:base, kind:"comp", ids:idsStr, tree}; }catch(e){}
+    }
+    return {src:s, ch: base, kind:"miss"};
+  });
+}
+
+/* ---------- geometry ---------- */
+// Seal space: width 1000, height H. Returns {W,H,cells:[{x,y,w,h,item}], shape}
+function layout(){
+  const n = items.length, k = state.kind, shape = state.shape;
+  const W = 1000, H = shape === "tall" ? 1300 : 1000;
+  let box;
+  if (shape === "round") { const s = 1000*0.70; box = {x:(W-s)/2, y:(H-s)/2, w:s, h:s}; }
+  else { const m = k === "zhu" ? state.border + 26 : state.border + 18; box = {x:m, y:m, w:W-2*m, h:H-2*m}; }
+  if (!n) return {W,H,box,cells:[]};
+  const c = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+  const cols = Math.min(c, n);
+  const base = Math.floor(n/cols), extra = n % cols;
+  const counts = []; for (let j=0;j<cols;j++) counts.push(j < cols-extra ? base : base+1); // right-most columns get fewer
+  let order = items.map((_, i) => i);
+  if (n === 4 && state.order === "huiwen") order = [0, 3, 1, 2]; // 姓 right-top, 印 right-bottom, name in left column
+  const g = state.gap, cw = (box.w - g*(cols-1)) / cols;
+  const cells = []; let idx = 0;
+  for (let j=0;j<cols;j++){
+    const x = box.x + box.w - (j+1)*cw - j*g;
+    const rows = counts[j], ch = (box.h - g*(rows-1)) / rows;
+    for (let r=0;r<rows;r++){ cells.push({x, y: box.y + r*(ch+g), w: cw, h: ch, item: items[order[idx]], i: order[idx]}); idx++; }
+  }
+  return {W,H,box,cells};
+}
+
+// Path commands (font units, y-up) → seal-space SVG d
+function pathD(g, x, y, w, h, mode){
+  const bb = g.getBoundingBox(); const bw = Math.max(1, bb.x2-bb.x1), bh = Math.max(1, bb.y2-bb.y1);
+  const su = Math.min(w/bw, h/bh);
+  const t = mode === "fill" ? 1 : state.stretch/100;
+  const sx = su * Math.pow((w/bw)/su, t), sy = su * Math.pow((h/bh)/su, t);
+  const ox = x + (w - bw*sx)/2, oy = y + (h - bh*sy)/2;
+  const X = v => (ox + (v - bb.x1)*sx).toFixed(1), Y = v => (oy + (bb.y2 - v)*sy).toFixed(1);
+  let d = "";
+  for (const c of g.path.commands){
+    if (c.type === "M") d += `M${X(c.x)} ${Y(c.y)}`;
+    else if (c.type === "L") d += `L${X(c.x)} ${Y(c.y)}`;
+    else if (c.type === "Q") d += `Q${X(c.x1)} ${Y(c.y1)} ${X(c.x)} ${Y(c.y)}`;
+    else if (c.type === "C") d += `C${X(c.x1)} ${Y(c.y1)} ${X(c.x2)} ${Y(c.y2)} ${X(c.x)} ${Y(c.y)}`;
+    else if (c.type === "Z") d += "Z";
+  }
+  return d;
+}
+function defaultRatio(idc, kids){
+  if (idc === "⿰") { const l = leaves(kids[0]); return l.length === 1 && RADICALS_L.has(l[0]) ? 0.4 : 0.5; }
+  if (idc === "⿱") { const t = leaves(kids[0]), b = leaves(kids[1]);
+    if (t.length === 1 && TOP_SMALL.has(t[0])) return 0.36; if (b.length === 1 && BOTTOM_SMALL.has(b[0])) return 0.6; return 0.5; }
+  return null;
+}
+async function treeD(tree, x, y, w, h, ratio, top){
+  if (typeof tree === "string") { const g = await glyph(tree); return g ? pathD(g, x, y, w, h, "fill") : ""; }
+  const [idc, ...kids] = tree; const gp = Math.min(w, h) * 0.045;
+  let parts = [];
+  if (idc === "⿰" || idc === "⿲") {
+    const r = (top && ratio != null && idc === "⿰") ? ratio : (idc === "⿰" ? defaultRatio(idc, kids) : null);
+    const ws = idc === "⿰" ? [r, 1-r] : [1/3, 1/3, 1/3];
+    const inner = w - gp*(kids.length-1); let cx = x;
+    for (let i=0;i<kids.length;i++){ const kw = inner*ws[i]; parts.push(await treeD(kids[i], cx, y, kw, h, null, false)); cx += kw + gp; }
+  } else {
+    const r = (top && ratio != null && idc === "⿱") ? ratio : (idc === "⿱" ? defaultRatio(idc, kids) : null);
+    const hs = idc === "⿱" ? [r, 1-r] : [1/3, 1/3, 1/3];
+    const inner = h - gp*(kids.length-1); let cy = y;
+    for (let i=0;i<kids.length;i++){ const kh = inner*hs[i]; parts.push(await treeD(kids[i], x, cy, w, kh, null, false)); cy += kh + gp; }
+  }
+  return parts.join("");
+}
+async function cellD(cell){
+  const it = cell.item; if (!it || it.kind === "miss") return "";
+  if (it.kind === "ok") { const g = await glyph(it.ch); return g ? pathD(g, cell.x, cell.y, cell.w, cell.h) : ""; }
+  const ov = state.overrides[cell.i]; const ratio = ov && ov.ratio != null ? ov.ratio : null;
+  // composed glyphs fill the cell less tightly when stretch is low
+  const s = 0.82 + 0.18*(state.stretch/100), w = cell.w*s, h = cell.h*s;
+  return treeD(it.tree, cell.x + (cell.w-w)/2, cell.y + (cell.h-h)/2, w, h, ratio, true);
+}
+
+/* ---------- rendering ---------- */
+let renderToken = 0, geomCache = null;
+async function buildGeom(){
+  const L = layout();
+  const ds = await Promise.all(L.cells.map(cellD));
+  return {...L, d: ds.join("")};
+}
+function outline(ctx, G, k, off){
+  const {W,H} = G; ctx.beginPath();
+  if (state.shape === "round") ctx.ellipse(off + W/2*k, off + H/2*k, W/2*k, H/2*k, 0, 0, Math.PI*2);
+  else ctx.rect(off, off, W*k, H*k);
+}
+function drawInk(ctx, G, k, off){
+  const p = new Path2D(G.d);
+  ctx.save(); ctx.fillStyle = "#000"; ctx.strokeStyle = "#000"; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  if (state.kind === "zhu") {
+    const b = state.border;
+    ctx.save(); ctx.translate(off, off); ctx.scale(k, k);
+    ctx.lineWidth = b;
+    if (state.shape === "round") { ctx.beginPath(); ctx.ellipse(G.W/2, G.H/2, G.W/2 - b/2, G.H/2 - b/2, 0, 0, Math.PI*2); ctx.stroke(); }
+    else { ctx.beginPath(); const rr = 14; roundRect(ctx, b/2, b/2, G.W-b, G.H-b, rr); ctx.stroke(); }
+    ctx.fill(p); if (state.weight > 0) { ctx.lineWidth = state.weight; ctx.stroke(p); }
+    ctx.restore();
+  } else {
+    outline(ctx, G, k, off); ctx.fill();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.save(); ctx.translate(off, off); ctx.scale(k, k);
+    ctx.fill(p); if (state.weight > 0) { ctx.lineWidth = state.weight; ctx.stroke(p); }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+function roundRect(ctx, x, y, w, h, r){ ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+// seeded value noise
+function hash(x, y, s){ let h = (x*374761393 + y*668265263 + s*982451653) | 0; h = (h ^ (h >>> 13)) * 1274126177 | 0; return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function noise(cell, seed){
+  return (x, y) => {
+    const fx = x/cell, fy = y/cell, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx-ix, ty = fy-iy;
+    const sx = tx*tx*(3-2*tx), sy = ty*ty*(3-2*ty);
+    const a = hash(ix,iy,seed), b = hash(ix+1,iy,seed), c = hash(ix,iy+1,seed), d = hash(ix+1,iy+1,seed);
+    return a + (b-a)*sx + (c-a)*sy + (a-b-c+d)*sx*sy;
+  };
+}
+function texturize(src, G, k, off, colorHex){
+  const w = src.width, h = src.height, sctx = src.getContext("2d");
+  const A = sctx.getImageData(0,0,w,h).data;
+  const out = sctx.createImageData(w,h), O = out.data;
+  const wear = state.wear/100, s = state.seed;
+  const nDx = noise(26*k, s+1), nDy = noise(26*k, s+2), nDx2 = noise(7*k, s+11), nDy2 = noise(7*k, s+12);
+  const nSpeck = noise(3.2*k, s+3), nChip = noise(20*k, s+4), nDen = noise(55*k, s+5), nGrain = noise(1.6*k, s+6);
+  const amp = (2 + wear*6)*k, amp2 = (0.6 + wear*1.6)*k;
+  const r = parseInt(colorHex.slice(1,3),16), g = parseInt(colorHex.slice(3,5),16), b = parseInt(colorHex.slice(5,7),16);
+  const cx = off + G.W/2*k, cy = off + G.H/2*k, rx = G.W/2*k, ry = G.H/2*k, round = state.shape === "round";
+  for (let y=0;y<h;y++){
+    for (let x=0;x<w;x++){
+      const dx = (nDx(x,y)-.5)*2*amp + (nDx2(x,y)-.5)*2*amp2, dy = (nDy(x,y)-.5)*2*amp + (nDy2(x,y)-.5)*2*amp2;
+      let sx = Math.round(x+dx), sy = Math.round(y+dy);
+      if (sx<0||sy<0||sx>=w||sy>=h) continue;
+      let a = A[(sy*w+sx)*4+3]; if (!a) continue;
+      // distance to outer edge, in seal units
+      let d;
+      if (round){ const ex = (x-cx)/rx, ey = (y-cy)/ry; d = (1 - Math.sqrt(ex*ex+ey*ey)) * Math.min(G.W,G.H)/2; }
+      else d = Math.min(x-off, off+G.W*k-x, y-off, off+G.H*k-y)/k;
+      if (nSpeck(x,y) > 1 - wear*0.16) continue;
+      if (nChip(x,y) > 1 - wear*0.6*Math.exp(-Math.max(0,d)/38)) continue;
+      const den = (0.8 + 0.2*nDen(x,y)) * (0.9 + 0.1*nGrain(x,y));
+      const i = (y*w+x)*4; O[i]=r; O[i+1]=g; O[i+2]=b; O[i+3] = a*(1 - wear*0.35 + wear*0.35*den);
+    }
+  }
+  return out;
+}
+async function renderTo(canvas, px, G){
+  const off = Math.round(px*0.04), k = (px - 2*off) / G.W;
+  canvas.width = px; canvas.height = Math.round(G.H*k + 2*off);
+  const tmp = document.createElement("canvas"); tmp.width = canvas.width; tmp.height = canvas.height;
+  drawInk(tmp.getContext("2d"), G, k, off);
+  const img = texturize(tmp, G, k, off, state.ink);
+  canvas.getContext("2d").putImageData(img, 0, 0);
+}
+async function render(){
+  const tok = ++renderToken;
+  $("#busy").hidden = false;
+  resolve(); renderChars(); renderEditor(); renderMeta();
+  const G = await buildGeom(); if (tok !== renderToken) return;
+  geomCache = G;
+  const px = Math.round(Math.min(760, 380 * Math.max(1, Math.min(2, window.devicePixelRatio || 1))));
+  await renderTo($("#seal"), px, G);
+  $("#busy").hidden = true;
+  drawMinis();
+}
+let rq = 0; function schedule(){ cancelAnimationFrame(rq); rq = requestAnimationFrame(render); }
+
+/* ---------- side UI ---------- */
+function renderMeta(){
+  const t = items.map(i => i.ch).join("");
+  $("#swText").textContent = t;
+  $("#swKind").textContent = (state.kind === "zhu" ? "朱文" : "白文") + ({square:"方印",tall:"長方印",round:"圓印"})[state.shape];
+  const n = items.length;
+  $("#orderSeg").hidden = n !== 4;
+  let ord = "";
+  if (n === 4 && state.order === "huiwen") ord = `回文：${items[0]?.ch}${items[3]?.ch} 右列，${items[1]?.ch}${items[2]?.ch} 左列`;
+  else if (n > 1) ord = "讀序：自右而左，自上而下";
+  $("#readOrder").textContent = ord;
+  $("#sizeNote").textContent = state.shape === "tall" ? "1000 × 1300" : "1000 × 1000";
+  const changed = items.filter(i => i.src !== i.ch);
+  const missing = items.filter(i => i.kind === "miss");
+  let h = "";
+  if (changed.length) h += `已轉繁：${changed.map(i => `${i.src}→<b>${i.ch}</b>`).join("　")}。`;
+  if (items.some(i => i.kind === "comp")) h += `　藍標為拼合字，點一下可調整。`;
+  if (missing.length) h += `　<b>${missing.map(i=>i.ch).join("")}</b> 暫無篆形，點它可手動填寫部件。`;
+  if (!conv) h += "　簡繁轉換載入中…";
+  $("#convHint").innerHTML = h || "　";
+}
+function renderChars(){
+  const box = $("#chars"); box.innerHTML = "";
+  const n = items.length; box.style.setProperty("--cols", n <= 4 ? Math.max(n, 1) : n <= 6 ? 3 : 4);
+  items.forEach((it, i) => {
+    const b = document.createElement("button"); b.className = "ch"; b.type = "button";
+    b.setAttribute("aria-pressed", String(state.sel === i));
+    const tag = it.kind === "ok" ? ["ok","說文"] : it.kind === "comp" ? ["comp","拼合"] : ["miss","缺字"];
+    b.innerHTML = `<canvas width="92" height="92" data-i="${i}"></canvas><span class="kai">${it.ch}</span><span class="tag ${tag[0]}">${tag[1]}</span><span class="code">U+${it.ch.codePointAt(0).toString(16).toUpperCase()}</span>`;
+    b.onclick = () => { state.sel = state.sel === i ? -1 : i; renderChars(); renderEditor(); drawMinis(); };
+    box.appendChild(b);
+  });
+}
+async function drawMinis(){
+  for (const cv of document.querySelectorAll(".ch canvas")){
+    const i = +cv.dataset.i, it = items[i]; const ctx = cv.getContext("2d"); ctx.clearRect(0,0,92,92);
+    if (!it || it.kind === "miss") { ctx.strokeStyle = "#b9a37a"; ctx.setLineDash([4,4]); ctx.strokeRect(14,10,64,72); continue; }
+    const d = await cellD({x:14, y:6, w:64, h:80, item: it, i});
+    ctx.save(); ctx.scale(1,1); ctx.fillStyle = getComputedStyle(document.body).color; ctx.fill(new Path2D(d)); ctx.restore();
+  }
+}
+function renderEditor(){
+  const ed = $("#editor"); ed.innerHTML = "";
+  const i = state.sel, it = items[i]; if (!it) return;
+  const ov = state.overrides[i] || {};
+  const wrap = document.createElement("div"); wrap.className = "edit";
+  const idsVal = it.kind === "comp" ? it.ids : (ov.ids || "");
+  const isLR = it.kind === "comp" && /^[⿰⿱]/.test(it.ids);
+  const r = ov.ratio != null ? ov.ratio : (isLR ? defaultRatio(it.tree[0], it.tree.slice(1)) : 0.5);
+  wrap.innerHTML = `
+    <div class="row" style="grid-template-columns:5.5em minmax(0,1fr)"><label for="fForm">字形</label><input class="ids" id="fForm" value="${it.ch}" maxlength="2" aria-label="使用的字形"></div>
+    <div class="row" style="grid-template-columns:5.5em minmax(0,1fr)"><label for="fIds">部件拼合</label><input class="ids" id="fIds" value="${idsVal}" placeholder="如 ⿰玉奇" aria-label="部件拼合"></div>
+    ${isLR ? `<div class="row"><label for="fRatio">${it.ids[0]==="⿰"?"左旁寬度":"上部高度"}</label><input type="range" id="fRatio" min="25" max="75" value="${Math.round(r*100)}"><output id="oRatio">${Math.round(r*100)}%</output></div>` : ""}
+    <div class="seg"><button type="button" data-ins="⿰">⿰ 左右</button><button type="button" data-ins="⿱">⿱ 上下</button><button type="button" data-ins="⿲">⿲ 左中右</button><button type="button" data-ins="⿳">⿳ 上中下</button><button type="button" id="fReset">還原</button></div>
+    <p class="note">「字形」可換成異體或繁體寫法（如 後／后）。「部件拼合」用結構符加部件，例：琦 = ⿰玉奇，鷺 = ⿱路鳥；部件須在《說文》字庫內，偏旁請寫本字（氵寫水、扌寫手、王旁寫玉）。</p>`;
+  ed.appendChild(wrap);
+  const set = patch => { state.overrides[i] = {...(state.overrides[i]||{}), ...patch}; schedule(); };
+  wrap.querySelector("#fForm").oninput = e => { const v = Array.from(e.target.value.trim())[0]; set({form: v || undefined}); };
+  const fIds = wrap.querySelector("#fIds");
+  fIds.onchange = e => set({ids: e.target.value.trim() || undefined, ratio: undefined});
+  wrap.querySelectorAll("[data-ins]").forEach(b => b.onclick = () => { fIds.value = b.dataset.ins + fIds.value.replace(/^[⿰⿱⿲⿳]/, ""); fIds.focus(); });
+  const fr = wrap.querySelector("#fRatio");
+  if (fr) fr.oninput = e => { wrap.querySelector("#oRatio").textContent = e.target.value + "%"; set({ratio: e.target.value/100}); };
+  wrap.querySelector("#fReset").onclick = () => { delete state.overrides[i]; schedule(); };
+}
+
+/* ---------- controls ---------- */
+function seg(id, key, after){
+  const el = $(id);
+  el.querySelectorAll("button").forEach(b => b.onclick = () => {
+    state[key] = b.dataset.v; el.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    after && after(); schedule();
+  });
+}
+seg("#kindSeg", "kind", () => { $("#lBorder").textContent = state.kind === "zhu" ? "邊框" : "留紅"; });
+seg("#shapeSeg", "shape"); seg("#orderSeg", "order");
+const sliders = {rWeight:"weight", rBorder:"border", rGap:"gap", rStretch:"stretch", rWear:"wear"};
+for (const [id, key] of Object.entries(sliders)){
+  const el = $("#"+id), o = $("#o"+id.slice(1));
+  const sync = () => { o.textContent = el.value; };
+  el.value = state[key]; sync();
+  el.oninput = () => { state[key] = +el.value; sync(); schedule(); };
+}
+$("#reseed").onclick = () => { state.seed = (state.seed * 7919 + 13) % 100000; schedule(); };
+let tt; $("#txt").oninput = e => { clearTimeout(tt); tt = setTimeout(() => { state.text = e.target.value; state.overrides = {}; state.sel = -1; schedule(); }, 180); };
+(function swatches(){
+  const box = $("#swatches");
+  INKS.forEach(s => { const b = document.createElement("button"); b.className = "sw"; b.type = "button"; b.style.background = s.c;
+    b.setAttribute("aria-pressed", String(s.c === state.ink)); b.setAttribute("aria-label", s.n); b.innerHTML = `<span>${s.n}</span>`;
+    b.onclick = () => { state.ink = s.c; box.querySelectorAll(".sw").forEach(x => x.setAttribute("aria-pressed", String(x === b))); schedule(); };
+    box.appendChild(b); });
+  const c = document.createElement("input"); c.type = "color"; c.id = "inkCustom"; c.value = state.ink; c.setAttribute("aria-label", "自選印泥顏色");
+  c.oninput = () => { state.ink = c.value; box.querySelectorAll(".sw").forEach(x => x.setAttribute("aria-pressed","false")); schedule(); };
+  box.appendChild(c);
+})();
+
+/* ---------- export ---------- */
+function toast(msg){ const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2600); }
+function fileBase(){ return (items.map(i => i.ch).join("") || "印") + (state.kind === "zhu" ? "_朱文" : "_白文"); }
+async function offer(filename, blob, previewUrl){
+  // Standalone site (no Claude viewer): plain browser download.
+  if (!window.claude) {
+    const url = URL.createObjectURL(blob), a = document.createElement("a");
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000); toast("已下載 " + filename); return;
+  }
+  let dl = null;
+  try { dl = window.claude?.use ? await window.claude.use("downloads") : null; } catch(e) { dl = null; }
+  if (dl) {
+    try { await dl.save({filename, data: blob}); toast("已保存"); return; }
+    catch(e){ if (e && e.code === "declined") return; if (e && e.code === "rate_limited") { toast("請稍候再試"); return; } }
+  }
+  // fallback: show the image so it can be long-pressed / right-clicked to save
+  const sh = document.createElement("div"); sh.className = "sheet";
+  sh.innerHTML = `<div><img alt="${filename}"><p class="note">長按或右鍵圖片即可保存。</p><button class="btn" type="button">關閉</button></div>`;
+  sh.querySelector("img").src = previewUrl; sh.querySelector("button").onclick = () => sh.remove(); sh.onclick = e => { if (e.target === sh) sh.remove(); };
+  document.body.appendChild(sh);
+}
+$("#dlPng").onclick = async () => {
+  if (!geomCache) return;
+  toast("正在生成 2000px 印面…");
+  await new Promise(r => setTimeout(r, 30));
+  const cv = document.createElement("canvas"); await renderTo(cv, 2000, geomCache);
+  cv.toBlob(b => offer(fileBase() + ".png", b, cv.toDataURL("image/png")), "image/png");
+};
+$("#dlSvg").onclick = () => {
+  if (!geomCache) return;
+  const G = geomCache, b = state.border, sw = state.weight, ink = state.ink;
+  const shapeEl = state.shape === "round" ? `<ellipse cx="${G.W/2}" cy="${G.H/2}" rx="${G.W/2}" ry="${G.H/2}"/>` : `<rect width="${G.W}" height="${G.H}"/>`;
+  const strokeAttr = sw > 0 ? ` stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round"` : "";
+  let body;
+  if (state.kind === "zhu") {
+    const frame = state.shape === "round" ? `<ellipse cx="${G.W/2}" cy="${G.H/2}" rx="${G.W/2-b/2}" ry="${G.H/2-b/2}" fill="none" stroke="${ink}" stroke-width="${b}"/>`
+      : `<rect x="${b/2}" y="${b/2}" width="${G.W-b}" height="${G.H-b}" rx="14" fill="none" stroke="${ink}" stroke-width="${b}"/>`;
+    body = frame + `<path d="${G.d}" fill="${ink}"${sw>0?` stroke="${ink}"`:""}${strokeAttr}/>`;
+  } else {
+    body = `<defs><mask id="m"><g fill="#fff">${shapeEl}</g><path d="${G.d}" fill="#000"${sw>0?` stroke="#000"`:""}${strokeAttr}/></mask></defs><g fill="${ink}" mask="url(#m)">${shapeEl}</g>`;
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${G.W} ${G.H}" width="${G.W}" height="${G.H}">${body}</svg>`;
+  const blob = new Blob([svg], {type: "image/svg+xml"});
+  offer(fileBase() + ".svg", blob, "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
+};
+
+/* ---------- boot ---------- */
+makeConv();
+loadMeta().then(render).catch(() => { $("#convHint").textContent = "字庫載入失敗，請刷新重試。"; });
+if (!conv) window.addEventListener("load", () => { makeConv(); if (avail.size) schedule(); });
+let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(schedule, 200); });
+})();
+</script>
+</body>
+</html>
